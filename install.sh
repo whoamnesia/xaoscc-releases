@@ -271,6 +271,8 @@ id -u xaoscc >/dev/null 2>&1 \
 
 systemctl stop xaosccd.service xaoscc-agent.service 2>/dev/null || true
 install -o root -g root -m 0755 "$SRC/xaosccd" "$SRC/xaoscc-agent" "$SRC/xaoscc" /usr/local/bin/
+# The webmail (ADR-024) runs only once the panel sets it up; the agent writes its unit then.
+install -o root -g root -m 0755 "$SRC/xaoscc-webmail" /usr/local/bin/
 install -o root -g root -m 0644 "$SRC/systemd/xaosccd.service" "$SRC/systemd/xaoscc-agent.service" /etc/systemd/system/
 
 # ---------------------------------------------------------------- sites
@@ -355,6 +357,8 @@ systemctl daemon-reload
 # Next to aaPanel the name nginx is its nginx, and it is running.
 [[ $BESIDE == yes ]] || systemctl enable --now nginx.service >/dev/null 2>&1
 systemctl enable --now xaoscc-agent.service xaosccd.service >/dev/null 2>&1
+# A webmail that already runs picks up the new program.
+systemctl try-restart xaoscc-webmail.service 2>/dev/null || true
 systemctl enable fail2ban.service >/dev/null 2>&1
 systemctl restart fail2ban.service
 
