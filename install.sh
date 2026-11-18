@@ -16,10 +16,13 @@ set -euo pipefail
 # repository on GitHub.
 SITE_URL="https://get.xaos.cc"
 RELEASES_URL="https://github.com/whoamnesia/xaoscc-releases/releases/download"
-# minisign public key that release archives are signed with (key id 5357BA8306410571).
-# The secret half belongs to the owner and lives outside this repository and outside any
-# server. A downloaded archive that this key does not vouch for is not installed.
-RELEASE_PUBKEY="RWRxBUEGg7pXUzp95Z1flPPOdPtt1cX9Kq7fc9rjF4nP+8KlBqJGb3gw"
+# minisign public keys that release archives may be signed with, separated by spaces; any
+# one of them is enough. The first is the owner's (key id 5357BA8306410571): its secret
+# half lives outside this repository and outside any server, and it signs the release
+# that takes another key out of this list. The second is the key Claude signs releases
+# with (key id DD6B33495157150E, docs/adr/025-release-keys.md). A downloaded archive
+# that none of these keys vouches for is not installed.
+RELEASE_PUBKEYS="RWRxBUEGg7pXUzp95Z1flPPOdPtt1cX9Kq7fc9rjF4nP+8KlBqJGb3gw RWQOFVdRSTNr3Z+m0WIuOipgB466AieHv9uC6Ka00h2arvd4nACbccxR"
 
 PORT=8743
 HOST=""
@@ -152,8 +155,14 @@ if [[ -z "$SRC" || ! -x "$SRC/xaosccd" ]]; then
   curl -fsSL -o "$TMP/$archive" "$RELEASES_URL/$version/$archive" \
     && curl -fsSL -o "$TMP/$archive.minisig" "$RELEASES_URL/$version/$archive.minisig" \
     || die "release $version for $ARCH or its signature is not at $RELEASES_URL"
-  minisign -Vm "$TMP/$archive" -P "$RELEASE_PUBKEY" >/dev/null \
-    || die "the release signature does not verify; nothing was installed"
+  verified=no
+  for key in $RELEASE_PUBKEYS; do
+    if minisign -Vm "$TMP/$archive" -P "$key" >/dev/null 2>&1; then
+      verified=yes
+      break
+    fi
+  done
+  [[ $verified == yes ]] || die "the release signature does not verify; nothing was installed"
   tar -xzf "$TMP/$archive" -C "$TMP"
   SRC="$TMP/${archive%.tar.gz}"
 fi

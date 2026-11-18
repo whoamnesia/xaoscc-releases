@@ -18,12 +18,18 @@ curl -fsSL https://get.xaos.cc/install.sh | sudo bash -s -- --host <адрес> 
 
 ## Подпись
 
-Каждый архив подписан ключом [minisign](https://jedisct1.github.io/minisign/). Установщик проверяет подпись сам и ничего не ставит, если она не сходится. Проверить архив руками:
+Каждый архив подписан ключом [minisign](https://jedisct1.github.io/minisign/). Установщик проверяет подпись сам и ничего не ставит, если она не сходится. С версии 1.0.4 ключей два, подходит любой:
 
-```sh
-minisign -Vm xaoscc_v1.0.0_linux_amd64.tar.gz -P RWRxBUEGg7pXUzp95Z1flPPOdPtt1cX9Kq7fc9rjF4nP+8KlBqJGb3gw
-```
+- `DD6B33495157150E`, им подписываются выпуски начиная с 1.0.5:
 
-Идентификатор ключа: `5357BA8306410571`.
+  ```sh
+  minisign -Vm xaoscc_v1.0.5_linux_amd64.tar.gz -P RWQOFVdRSTNr3Z+m0WIuOipgB466AieHv9uC6Ka00h2arvd4nACbccxR
+  ```
+
+- `5357BA8306410571`, ключ владельца, им подписаны 1.0.0–1.0.4:
+
+  ```sh
+  minisign -Vm xaoscc_v1.0.4_linux_amd64.tar.gz -P RWRxBUEGg7pXUzp95Z1flPPOdPtt1cX9Kq7fc9rjF4nP+8KlBqJGb3gw
+  ```
 
 Поставить панель можно и без скачивания установщика: распаковать проверенный архив и запустить `install.sh` из него.
