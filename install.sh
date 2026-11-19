@@ -23,6 +23,14 @@ RELEASES_URL="https://github.com/whoamnesia/xaoscc-releases/releases/download"
 # with (key id DD6B33495157150E, docs/adr/025-release-keys.md). A downloaded archive
 # that none of these keys vouches for is not installed.
 RELEASE_PUBKEYS="RWRxBUEGg7pXUzp95Z1flPPOdPtt1cX9Kq7fc9rjF4nP+8KlBqJGb3gw RWQOFVdRSTNr3Z+m0WIuOipgB466AieHv9uC6Ka00h2arvd4nACbccxR"
+# Spare addresses of the releases, separated by spaces, for servers that cannot reach
+# get.xaos.cc or GitHub (docs/adr/027-network.md). A mirror is a plain web server with
+# latest.txt, CHANGELOG.md and releases/<version>/<archive> under one address. It is not
+# trusted: the archive it hands over is installed only if its signature verifies.
+MIRRORS=""
+# The address this copy of the installer was published at. Empty on get.xaos.cc; a
+# mirror writes its own address here (deploy/mirror.sh), and it is then asked first.
+SELF_URL=""
 
 PORT=8743
 HOST=""
@@ -33,6 +41,8 @@ FIREWALL=yes
 FORCE=no
 ASSUME_YES=no
 BESIDE=no
+EXTRA_MIRRORS=""
+PROXY=""
 
 usage() {
   cat <<'USAGE'
@@ -47,6 +57,10 @@ Usage: install.sh [options]
   --no-firewall        do not touch ufw
   --beside-aapanel     install next to aaPanel, which keeps ports 80, 443 and 3306
                        until its sites are switched over in the panel
+  --mirror <url>       look for the release at this address first, before get.xaos.cc;
+                       may be given more than once
+  --proxy <url>        download through this proxy, such as http://login:password@host:port
+                       (for this run only; set it in the panel under Settings, Network)
   --force              continue even if ports 80/443 are taken or another panel is found
   --yes                never ask; fail if a required answer is missing
 USAGE
@@ -61,6 +75,8 @@ while [[ $# -gt 0 ]]; do
     --tailscale) ACCESS=tailscale; shift ;;
     --open) ACCESS=open; shift ;;
     --no-firewall) FIREWALL=no; shift ;;
+    --mirror) EXTRA_MIRRORS="$EXTRA_MIRRORS ${2%/}"; shift 2 ;;
+    --proxy) PROXY="$2"; shift 2 ;;
     --force) FORCE=yes; shift ;;
     --beside-aapanel) BESIDE=yes; shift ;;
     --yes) ASSUME_YES=yes; shift ;;
@@ -85,6 +101,13 @@ ask() { # ask <variable> <prompt> [default]
   printf -v "$var" '%s' "${answer:-$default}"
   [[ -n "${!var}" ]] || die "$prompt is required"
 }
+
+# With --proxy, curl and apt of this run go through it. The panel and its agent do not
+# read these variables: their proxy is set in the panel.
+if [[ -n "$PROXY" ]]; then
+  export http_proxy="$PROXY" https_proxy="$PROXY" HTTPS_PROXY="$PROXY"
+  export no_proxy="localhost,127.0.0.1,::1" NO_PROXY="localhost,127.0.0.1,::1"
+fi
 
 port_in_use() { ss -Hltn "sport = :$1" 2>/dev/null | grep -q .; }
 
@@ -148,21 +171,45 @@ if [[ -z "$SRC" || ! -x "$SRC/xaosccd" ]]; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates minisign >/dev/null
   TMP=$(mktemp -d)
   trap 'rm -rf "$TMP"' EXIT
-  version=$(curl -fsSL "$SITE_URL/latest.txt") \
-    || die "no release list at $SITE_URL. Download a release archive and run install.sh from inside it"
-  [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "unexpected version string from $SITE_URL"
-  archive="xaoscc_${version}_linux_${ARCH}.tar.gz"
-  curl -fsSL -o "$TMP/$archive" "$RELEASES_URL/$version/$archive" \
-    && curl -fsSL -o "$TMP/$archive.minisig" "$RELEASES_URL/$version/$archive.minisig" \
-    || die "release $version for $ARCH or its signature is not at $RELEASES_URL"
-  verified=no
-  for key in $RELEASE_PUBKEYS; do
-    if minisign -Vm "$TMP/$archive" -P "$key" >/dev/null 2>&1; then
-      verified=yes
+  # fetch_release <site> <releases>: the newest release of one source, downloaded and
+  # checked. A source that stalls is given up on, so that the next one gets its turn.
+  fetch_release() {
+    local site="$1" releases="$2" key
+    version=$(curl -fsSL --connect-timeout 15 --max-time 60 "$site/latest.txt" | tr -d '[:space:]') || return 1
+    [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { warn "$site/latest.txt does not hold a version"; return 1; }
+    archive="xaoscc_${version}_linux_${ARCH}.tar.gz"
+    rm -f "$TMP/$archive" "$TMP/$archive.minisig"
+    curl -fsSL --connect-timeout 15 --speed-limit 2048 --speed-time 45 -o "$TMP/$archive" "$releases/$version/$archive" \
+      && curl -fsSL --connect-timeout 15 --max-time 60 -o "$TMP/$archive.minisig" "$releases/$version/$archive.minisig" \
+      || { warn "release $version for $ARCH or its signature is not at $releases"; return 1; }
+    for key in $RELEASE_PUBKEYS; do
+      if minisign -Vm "$TMP/$archive" -P "$key" >/dev/null 2>&1; then
+        return 0
+      fi
+    done
+    warn "the signature of the release from $releases does not verify"
+    return 2
+  }
+  # get.xaos.cc keeps the archives on GitHub; every other source keeps them next to
+  # latest.txt, under releases/.
+  got=no bad=no
+  for site in $EXTRA_MIRRORS $SELF_URL "$SITE_URL" $MIRRORS; do
+    site="${site%/}"
+    releases="$site/releases"
+    [[ "$site" == "$SITE_URL" ]] && releases="$RELEASES_URL"
+    rc=0
+    fetch_release "$site" "$releases" || rc=$?
+    if [[ $rc -eq 0 ]]; then
+      got=yes
+      [[ "$site" == "$SITE_URL" ]] || echo "The release comes from $site"
       break
     fi
+    [[ $rc -eq 2 ]] && bad=yes
   done
-  [[ $verified == yes ]] || die "the release signature does not verify; nothing was installed"
+  if [[ $got == no ]]; then
+    [[ $bad == yes ]] && die "the release signature does not verify; nothing was installed"
+    die "no release could be downloaded from $SITE_URL${MIRRORS:+ or its mirrors}. Pass --mirror <url> or --proxy <url>, or download a release archive and run install.sh from inside it"
+  fi
   tar -xzf "$TMP/$archive" -C "$TMP"
   SRC="$TMP/${archive%.tar.gz}"
 fi
@@ -175,7 +222,7 @@ done
 # ---------------------------------------------------------------- questions
 
 if [[ $UPGRADE == no ]]; then
-  default_host=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}' | head -n1)
+  default_host=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}' | head -n1) || default_host=""
   ask HOST "Domain or IP the panel will be opened by" "$default_host"
   ask EMAIL "Email of the first owner"
 
@@ -231,7 +278,7 @@ fi
 if ! dpkg -s nginx >/dev/null 2>&1; then
   say "Installing nginx from nginx.org (stable)"
   keyring=/usr/share/keyrings/nginx-archive-keyring.gpg
-  curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor --yes -o "$keyring"
+  curl -fsSL --connect-timeout 15 --max-time 60 https://nginx.org/keys/nginx_signing.key | gpg --dearmor --yes -o "$keyring"
   gpg --show-keys --with-colons "$keyring" | grep -q '^fpr:.*:573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62:' \
     || { rm -f "$keyring"; die "the nginx.org signing key does not have the expected fingerprint"; }
   echo "deb [signed-by=$keyring] https://nginx.org/packages/ubuntu noble nginx" > /etc/apt/sources.list.d/nginx.list
