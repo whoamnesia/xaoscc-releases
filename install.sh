@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# xaosControl installer for a clean Ubuntu 24.04 server.
+# xaosControl installer for a clean Ubuntu 24.04 or 26.04 server.
 #
 #   From a release archive:  tar xzf xaoscc_*.tar.gz && sudo ./xaoscc_*/install.sh
 #   One-liner, which downloads the latest release and checks its signature:
@@ -116,8 +116,12 @@ port_in_use() { ss -Hltn "sport = :$1" 2>/dev/null | grep -q .; }
 [[ $EUID -eq 0 ]] || die "run the installer as root (sudo)"
 
 . /etc/os-release
-[[ "${ID:-}" == ubuntu && "${VERSION_ID:-}" == 24.04 ]] \
-  || die "xaosControl supports Ubuntu 24.04 only; this is ${PRETTY_NAME:-an unknown system}"
+# Each release by its codename, which is what the package repositories are named after.
+# An upgrade of 24.04 to 26.04 in place is not supported: see docs/adr/040-ubuntu-26.04.md.
+case "${ID:-} ${VERSION_ID:-} ${VERSION_CODENAME:-}" in
+  "ubuntu 24.04 noble" | "ubuntu 26.04 resolute") CODENAME=$VERSION_CODENAME ;;
+  *) die "xaosControl supports Ubuntu 24.04 and 26.04; this is ${PRETTY_NAME:-an unknown system}" ;;
+esac
 
 case "$(uname -m)" in
   x86_64) ARCH=amd64 ;;
@@ -262,11 +266,18 @@ apt-get update -qq
 apt-get install -y -qq curl ca-certificates gnupg ufw fail2ban restic logrotate software-properties-common \
   git openssh-client rsync >/dev/null
 
-# PHP versions come from ppa:ondrej/php (FR-PHP-1). The repository is added here, where a
-# person sees the output; the panel installs the packages later, when a version is asked for.
-if ! compgen -G '/etc/apt/sources.list.d/ondrej-ubuntu-php-*' >/dev/null; then
-  add-apt-repository --yes --no-update ppa:ondrej/php >/dev/null 2>&1 \
-    || warn "could not add ppa:ondrej/php; the panel will try again when a PHP version is installed"
+# PHP versions come from the builds of Ondřej Surý (FR-PHP-1): ppa:ondrej/php on 24.04,
+# packages.sury.org on 26.04, where the PPA has none. The repository is added here, where
+# a person sees the output; the panel installs the packages later, when a version is
+# asked for. On 26.04 the agent writes it, with the signing key built into it.
+if [[ $CODENAME == noble ]]; then
+  if ! compgen -G '/etc/apt/sources.list.d/ondrej-ubuntu-php-*' >/dev/null; then
+    add-apt-repository --yes --no-update ppa:ondrej/php >/dev/null 2>&1 \
+      || warn "could not add ppa:ondrej/php; the panel will try again when a PHP version is installed"
+  fi
+else
+  "$SRC/xaoscc-agent" -php-repo >/dev/null \
+    || warn "could not add the PHP repository; the panel will try again when a PHP version is installed"
 fi
 
 if [[ $BESIDE == yes ]]; then
@@ -281,7 +292,7 @@ if ! dpkg -s nginx >/dev/null 2>&1; then
   curl -fsSL --connect-timeout 15 --max-time 60 https://nginx.org/keys/nginx_signing.key | gpg --dearmor --yes -o "$keyring"
   gpg --show-keys --with-colons "$keyring" | grep -q '^fpr:.*:573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62:' \
     || { rm -f "$keyring"; die "the nginx.org signing key does not have the expected fingerprint"; }
-  echo "deb [signed-by=$keyring] https://nginx.org/packages/ubuntu noble nginx" > /etc/apt/sources.list.d/nginx.list
+  echo "deb [signed-by=$keyring] https://nginx.org/packages/ubuntu $CODENAME nginx" > /etc/apt/sources.list.d/nginx.list
   printf 'Package: *\nPin: origin nginx.org\nPin-Priority: 900\n' > /etc/apt/preferences.d/99nginx
   apt-get update -qq
   if [[ $BESIDE == yes ]]; then

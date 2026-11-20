@@ -1,6 +1,6 @@
 # xaosControl: релизы
 
-Здесь лежат готовые сборки панели xaosControl для Ubuntu 24.04 и её установщик. Исходного кода в этом репозитории нет.
+Здесь лежат готовые сборки панели xaosControl для Ubuntu 24.04 и 26.04 LTS и её установщик. Исходного кода в этом репозитории нет.
 
 ## Установка
 
@@ -25,7 +25,7 @@ curl -fsSL https://get.xaos.cc/install.sh | sudo bash -s -- --host <адрес> 
 - `DD6B33495157150E`, им подписываются выпуски начиная с 1.0.5:
 
   ```sh
-  minisign -Vm xaoscc_v1.0.5_linux_amd64.tar.gz -P RWQOFVdRSTNr3Z+m0WIuOipgB466AieHv9uC6Ka00h2arvd4nACbccxR
+  minisign -Vm xaoscc_v1.0.6_linux_amd64.tar.gz -P RWQOFVdRSTNr3Z+m0WIuOipgB466AieHv9uC6Ka00h2arvd4nACbccxR
   ```
 
 - `5357BA8306410571`, ключ владельца, им подписаны 1.0.0–1.0.4:
